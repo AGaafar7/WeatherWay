@@ -1,5 +1,7 @@
 package org.agaafar.weatherway.ui.screens
 
+import android.content.Context
+import android.content.res.Configuration
 import android.location.Location
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,9 +24,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.agaafar.weatherway.R
 import org.agaafar.weatherway.data.WeatherApi
+import org.agaafar.weatherway.data.WeatherCache
 import org.agaafar.weatherway.data.WeatherParser
 import org.agaafar.weatherway.location.LocationHelper
 import org.agaafar.weatherway.models.Forecast
+import org.agaafar.weatherway.utils.NetworkUtils
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -32,33 +36,50 @@ import java.util.Locale
 @Composable
 fun ForecastScreen(
     locationHelper: LocationHelper,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    context: Context
 ) {
+    val configuration = LocalConfiguration.current
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
     var forecast by remember { mutableStateOf<List<Forecast>?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
 
     fun fetchForecast() {
         loading = true
-        locationHelper.getCurrentLocation { location: Location? ->
-            if (location != null) {
-                WeatherApi.getForecast(
-                    latitude = location.latitude,
-                    longitude = location.longitude,
-                    startDate = getStartDate(),
-                    endDate = getEndDate()
-                ) { result ->
-                    if (result != null) {
-                        forecast = WeatherParser.parseForecast(result)
-                        errorMessage = if (forecast.isNullOrEmpty()) "Could not load forecast" else null
-                    } else {
-                        errorMessage = "Error fetching forecast"
+        if (!NetworkUtils.isNetworkAvailable(context)) {
+            // Load cached forecast if offline
+            val cachedForecastJson = WeatherCache.getForecast(context)
+            if (cachedForecastJson != null) {
+                forecast = WeatherParser.parseForecast(cachedForecastJson)
+                errorMessage = if (forecast.isNullOrEmpty()) "No cached forecast available" else null
+            } else {
+                errorMessage = "No cached forecast available"
+            }
+            loading = false
+        } else {
+            locationHelper.getCurrentLocation { location: Location? ->
+                if (location != null) {
+                    WeatherApi.getForecast(
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        startDate = getStartDate(),
+                        endDate = getEndDate()
+                    ) { result ->
+                        if (result != null) {
+                            forecast = WeatherParser.parseForecast(result)
+                            WeatherCache.saveForecast(context, result) // Cache the forecast
+                            errorMessage = if (forecast.isNullOrEmpty()) "Could not load forecast" else null
+                        } else {
+                            errorMessage = "Error fetching forecast"
+                        }
+                        loading = false
                     }
+                } else {
+                    errorMessage = "Unable to get location"
                     loading = false
                 }
-            } else {
-                errorMessage = "Unable to get location"
-                loading = false
             }
         }
     }
@@ -121,7 +142,7 @@ fun ForecastScreen(
                         // Display the first day's forecast prominently
                         val firstDay = forecastList.firstOrNull()
                         firstDay?.let {
-                            HighlightedForecast(forecast = it)
+                            HighlightedForecast(forecast = it, isPortrait = isPortrait)
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
@@ -143,7 +164,7 @@ fun ForecastScreen(
 }
 
 @Composable
-fun HighlightedForecast(forecast: Forecast) {
+fun HighlightedForecast(forecast: Forecast, isPortrait: Boolean) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -151,20 +172,53 @@ fun HighlightedForecast(forecast: Forecast) {
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.cloudy),
-                contentDescription = "Weather Icon",
-                modifier = Modifier.size(64.dp),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
+        if (isPortrait) {
+            Row(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.cloudy),
+                    contentDescription = "Weather Icon",
+                    modifier = Modifier.size(64.dp),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = forecast.dateTime,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2196F3)
+                    )
+                    Text(
+                        text = "${forecast.temperature}°C",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = forecast.description,
+                        fontSize = 16.sp,
+                        color = Color(0xFF757575)
+                    )
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.cloudy),
+                    contentDescription = "Weather Icon",
+                    modifier = Modifier.size(64.dp),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = forecast.dateTime,
                     fontSize = 20.sp,
@@ -185,6 +239,7 @@ fun HighlightedForecast(forecast: Forecast) {
         }
     }
 }
+
 @Composable
 fun ForecastDayItem(forecast: Forecast) {
     Card(
@@ -216,6 +271,7 @@ fun ForecastDayItem(forecast: Forecast) {
         }
     }
 }
+
 fun getStartDate(): String {
     val calendar = Calendar.getInstance()
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.time)
