@@ -19,7 +19,8 @@ fun AppNavigation(navController: NavHostController, context: Context) {
         locationHelper = locationHelper,
         onNavigateToForecast = {
             navController.navigate("forecast")
-        }
+        },
+        context = context
     )
 }
 
@@ -28,7 +29,8 @@ fun AppNavigation(navController: NavHostController, context: Context) {
                 locationHelper = locationHelper, // Pass LocationHelper here
                 onNavigateBack = {
                     navController.popBackStack()
-                }
+                },
+                context = context
             )
         }
     }
